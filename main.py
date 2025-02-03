@@ -3,74 +3,163 @@ import sys
 import json
 import time
 import random
-import requests  # install via: pip install requests
+import requests  # pip install requests
+from bs4 import BeautifulSoup  # pip install beautifulsoup4
 
 # ---------------------------
 # CONFIGURATION & CONSTANTS
 # ---------------------------
-CURRENT_VERSION = "1.0.0"
+# Default version if version.txt is missing
+DEFAULT_VERSION = "0.5.0"
 
-# URL to your version file on GitHub (raw content)
-# Replace these with your GitHub details and branch as needed.
-VERSION_JSON_URL = "https://raw.githubusercontent.com/your-username/your-repo-name/main/version.json"
-
-# URL to the updated script (if you want to auto-update)
-UPDATED_SCRIPT_URL = "https://raw.githubusercontent.com/your-username/your-repo-name/main/casino.py"
+# URL to your remote version.json file (use the raw URL)
+VERSION_JSON_URL = "https://raw.githubusercontent.com/razberi-py/Auto-updater/main/version.json"
 
 # ---------------------------
-# VERSION CHECK, CHANGELOG & AUTO-UPDATER USING JSON
+# LOCAL VERSION FUNCTIONS
 # ---------------------------
-def check_for_update():
+def get_local_version():
     """
-    Checks a JSON file on GitHub for the latest version.
-    Displays the changelog if an update is available.
+    Reads the current version from 'version.txt' in the current directory.
+    If the file is missing or unreadable, returns the DEFAULT_VERSION.
     """
-    print("Checking for updates...")
+    try:
+        with open("version.txt", "r", encoding="utf-8") as f:
+            version = f.read().strip()
+            if version:
+                return version
+    except Exception:
+        pass
+    return DEFAULT_VERSION
+
+# ---------------------------
+# HELPER FUNCTIONS FOR JSON PARSING
+# ---------------------------
+def get_clean_json(text):
+    """
+    If the downloaded text isn't valid JSON, try stripping out HTML using BeautifulSoup.
+    """
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        soup = BeautifulSoup(text, 'html.parser')
+        cleaned_text = soup.get_text().strip()
+        return json.loads(cleaned_text)
+
+def fetch_update_info():
+    """
+    Fetches and returns the update information from VERSION_JSON_URL.
+    Returns the parsed JSON data (a dict) on success, or None on failure.
+    """
     try:
         response = requests.get(VERSION_JSON_URL)
         if response.status_code != 200:
             print("Could not check for updates (HTTP status:", response.status_code, ")")
-            return
+            return None
 
-        # Parse the JSON file. It should contain keys like "latest_version" and "changelog".
-        data = response.json()
-        latest_version = data.get("latest_version", CURRENT_VERSION)
-        changelog = data.get("changelog", "No changelog provided.")
-
-        if latest_version != CURRENT_VERSION:
-            print(f"\nUpdate available!")
-            print(f"Current version: {CURRENT_VERSION}")
-            print(f"Latest version: {latest_version}\n")
-            print("Changelog:")
-            print(changelog)
-            print("\n")
-            do_update = input("Do you want to update now? (y/n): ").lower()
-            if do_update == "y":
-                download_update()
-            else:
-                print("Update canceled by user.")
-        else:
-            print("You are running the latest version.")
+        content = response.text
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError:
+            print("Initial JSON parse failed; attempting to clean HTML with BeautifulSoup...")
+            data = get_clean_json(content)
+        return data
     except Exception as e:
         print("Update check failed:", e)
+        return None
 
-def download_update():
+# ---------------------------
+# UPDATE PROCESS FUNCTIONS
+# ---------------------------
+def download_updates(files):
     """
-    Downloads the updated script from a specified URL and replaces the current file.
+    Downloads updated files as specified in the files list.
+    Backs up the current file (if it exists) before replacing it.
+    After updating, the script restarts.
     """
-    try:
-        print("Downloading updated version...")
-        updated_code = requests.get(UPDATED_SCRIPT_URL).text
-        current_file = sys.argv[0]
-        backup_file = current_file + ".bak"
-        os.rename(current_file, backup_file)
-        with open(current_file, "w", encoding="utf-8") as f:
-            f.write(updated_code)
-        print("Update downloaded and applied. Restarting...")
-        time.sleep(2)
-        os.execv(sys.executable, [sys.executable] + sys.argv)
-    except Exception as e:
-        print("Update failed:", e)
+    for file_info in files:
+        file_name = file_info.get("name")
+        file_url = file_info.get("url")
+        if not file_name or not file_url:
+            print("Skipping a file update entry due to missing information.")
+            continue
+
+        try:
+            print(f"Downloading updated version of '{file_name}' from {file_url} ...")
+            file_response = requests.get(file_url)
+            if file_response.status_code != 200:
+                print(f"Failed to download {file_name} (HTTP status: {file_response.status_code})")
+                continue
+            updated_code = file_response.text
+            # Backup current file if it exists
+            if os.path.exists(file_name):
+                backup_file = file_name + ".bak"
+                os.rename(file_name, backup_file)
+                print(f"Backed up the old {file_name} to {backup_file}")
+            with open(file_name, "w", encoding="utf-8") as f:
+                f.write(updated_code)
+            print(f"{file_name} updated successfully.")
+        except Exception as e:
+            print(f"Update failed for {file_name}:", e)
+    
+    print("\nAll available updates have been applied. Restarting the tool in 3 seconds...")
+    time.sleep(3)
+    os.execv(sys.executable, [sys.executable] + sys.argv)
+
+def update_menu():
+    """
+    Checks for updates and then presents the user with options:
+    - Update now
+    - Display debug information (the raw update JSON)
+    - Cancel
+    """
+    print("Checking for updates...")
+    update_info = fetch_update_info()
+    if update_info is None:
+        input("Press Enter to return to the main menu...")
+        return
+
+    remote_version = update_info.get("latest_version", DEFAULT_VERSION)
+    changelog = update_info.get("changelog", "No changelog provided.")
+    files_to_update = update_info.get("files", [])
+    local_version = get_local_version()
+
+    if remote_version == local_version:
+        print("You are running the latest version.")
+        input("Press Enter to return to the main menu...")
+        return
+
+    print(f"\nUpdate available!")
+    print(f"Local version: {local_version}")
+    print(f"Latest version: {remote_version}\n")
+    print("Changelog:")
+    print(changelog)
+    print("\nFiles to update:")
+    for f in files_to_update:
+        print(" -", f.get("name", "unknown"))
+    print("\n")
+    
+    # Present options to the user
+    while True:
+        print("Options:")
+        print("[U]pdate now")
+        print("[D]isplay debug info")
+        print("[C]ancel")
+        choice = input("Choose an option (U/D/C): ").lower().strip()
+        if choice == "u":
+            download_updates(files_to_update)
+            break  # Should not reach here as download_updates restarts the script.
+        elif choice == "d":
+            print("\n--- Debug Information ---")
+            print(json.dumps(update_info, indent=2))
+            print("--- End Debug Information ---\n")
+        elif choice == "c":
+            print("Update canceled.")
+            break
+        else:
+            print("Invalid choice. Please select U, D, or C.")
+
+    input("Press Enter to return to the main menu...")
 
 # ---------------------------
 # GAME FUNCTIONS
@@ -142,8 +231,10 @@ def roulette():
 def main_menu():
     while True:
         os.system('cls' if os.name == 'nt' else 'clear')
+        # Read the local version from version.txt every time the menu is shown.
+        local_version = get_local_version()
         print("=== Python Casino ===")
-        print("Version:", CURRENT_VERSION)
+        print("Version:", local_version)
         print("\nSelect a game:")
         print("1. Blackjack")
         print("2. Coin Flip")
@@ -165,8 +256,7 @@ def main_menu():
         elif choice == "5":
             roulette()
         elif choice == "6":
-            check_for_update()
-            input("Press Enter to return to the main menu...")
+            update_menu()
         elif choice == "7":
             print("Goodbye!")
             break
@@ -175,6 +265,5 @@ def main_menu():
             time.sleep(1)
 
 if __name__ == "__main__":
-    # Optionally, check for updates at startup.
-    check_for_update()
+    # No automatic update check at startup; update check is done on demand.
     main_menu()
