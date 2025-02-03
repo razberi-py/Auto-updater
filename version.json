@@ -1,5 +1,5 @@
 {
-  "latest_version": "0.5.5",
+  "latest_version": "0.5.7",
   "changelog": "### Version 0.5.2\n- Added animated effects for the Slot Machine game\n- Improved blackjack logic with split option and enhanced dealer rules\n- Fixed a bug in the coin flip randomization process\n\n### Version 0.5.1\n- Introduced the Roulette game with improved win conditions\n- Updated the Dice Roll game to include multiple dice options\n- Minor UI improvements across all games\n\n### Version 0.5.0\n- Initial release of the Python Casino Tool\n- Included basic mini-games: Blackjack, Coin Flip, Dice Roll, Slot Machine, and Roulette\n- Implemented a built-in version checker and updater using a JSON file\n",
   "files": [
     {
